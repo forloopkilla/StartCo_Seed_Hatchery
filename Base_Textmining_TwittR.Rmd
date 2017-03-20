@@ -1,0 +1,600 @@
+---
+title: "StartCo Project"
+output: html_notebook
+---
+
+
+https://github.com/datadolphyn/R/blob/master/SentimentAnalysis.R
+https://github.com/srdas/user2016/blob/master/TextMining_UseR2016.Rmd
+
+
+```{r set up}
+if(!require("pacman")) install.packages("pacman")
+pacman::p_load(twitteR,sentimentr,plyr,ggplot2,tm,wordcloud,textir,qdap,maptpx,RCurl,ROAuth,stringr,Git)
+library(twitteR);library(sentimentr);library(plyr);library(ggplot2);library(RColorBrewer);library(tm);library(wordcloud);library(textir);library(qdap);library(maptpx);library(RCurl)
+library(ROAuth);library(stringr);library(dplyr)
+install.packages("RCurl", "RJSONIO", "bitops")
+install.packages('base64enc')
+install.packages('streamR')
+```
+
+```{r dolphyn textming}
+# Author: Jitender Aswani, Co-Founder @datadolph.in
+# Date: 2012-30-1
+# Description: Extracts tweets from twitter and run sentiment analysis on using list of sentiment words from Hu and Liu
+# Packages Used: RCurl, XML, TwitteR, RJSONIO
+# Blog Reference: http://www.r-bloggers.com/updated-sentiment-analysis-and-a-word-cloud-for-netflix-the-r-way/
+# Download
+# Copyright (c) 2011, under the Creative Commons Attribution-NonCommercial 3.0 Unported (CC BY-NC 3.0) License
+# For more information see: https://creativecommons.org/licenses/by-nc/3.0/
+# All rights reserved.
+# Revised Sentiment Analyis using Hu & Liu's library of 6,800 negative and positive words
+
+#Populate the list of sentiment words from Hu and Liu (http://www.cs.uic.edu/~liub/FBS/sentiment-analysis.html)
+setwd("C:/Users/Justin/Documents/AjaxIntel")
+#Populate the list of sentiment words from Hu and Liu (http://www.cs.uic.edu/~liub/FBS/sentiment-analysis.html)
+huliu.positive <- scan("C:/Users/Justin/Documents/AjaxIntel/positive-words.txt", what='character', comment.char=';')
+huliu.negative <- scan("C:/Users/Justin/Documents/AjaxIntel/negative-words.txt", what='character', comment.char=';')
+# Add some extra words
+huliu.negative <- c(huliu.negative,'wtf','wait','waiting','epicfail', 'crash', 'bug', 'bugy', 'bugs', 'slow', 'lie')
+#Remove some words for example sap and Cloud
+huliu.negative <- huliu.negative[!huliu.nwords=='sap']
+huliu.negative <- huliu.negative[!huliu.nwords=='cloud']
+
+#
+# clean up a large character string
+#
+cleanText <- function(x) {
+  # tolower
+  x = tolower(x)
+  # remove rt
+  #x = gsub("rt", "", x)
+  # remove at
+  x = gsub("@\\w+", "", x)
+  # remove punctuation
+  x = gsub("[[:punct:]]", "", x)
+  # remove control characters
+  x <-  gsub('[[:cntrl:]]', '', x)
+  # remove numbers
+  x = gsub("[[:digit:]]", "", x)
+  # remove links http
+  x = gsub("http\\w+",  "", x)
+  # remove tabs
+  x = gsub("[ |\t]{2,}", " ", x)
+  # remove new lines
+  x = gsub("[ |\n]{1,}", " ", x)
+  # remove blank spaces at the beginning
+  x = gsub("^ ", "", x)
+  # remove blank spaces at the end
+  x = gsub(" $", "", x)
+  return(x)
+}
+
+
+#
+# clean up tweets or any other doucment for corpus and sentiment  analysis
+#
+cleanContent <- function(content){
+  # clean out non-ASCII characters, remove numbers, puncuations, stop words
+  content <- sapply(content, function(x) iconv(x, "latin1", "ASCII", sub=""))
+  content <- cleanText(content) # clean up
+  # remove stop-words
+  content <- removeWords(content,
+                         c(stopwords("english"),  "twitter", "wikipedia"))
+  return(content)
+}
+#
+# build a generic tag cloud
+#
+buildTagCloud  <- function (content, word.threshold=2){
+  #cleanup
+  content <- cleanContent(content)
+  # make corpus for text mining
+  content.corpus <- Corpus(VectorSource(content))
+ 
+  #build a term document
+  #content.dtm <- TermDocumentMatrix(content.corpus, control = list(stopwords = TRUE, minWordLength = 5))
+  content.dtm <- TermDocumentMatrix(content.corpus, control = list(minWordLength = 5))
+  # get a matrix
+  content.m = as.matrix(content.dtm)
+  # get word counts in decreasing order
+  content.words <- sort(rowSums(content.m), decreasing=TRUE)
+  # create a data frame with words and their frequencies
+  content.df = data.frame(text=names(content.words), size=content.words)
+  #write.csv(content.words, "company-word-tag.csv", row.names=F)
+  return( content.df[content.df$size > word.threshold,])
+}
+
+#
+# get sentiment score for each tweet
+#
+getSentimentScore <- function(tweets) {
+  scores <- laply(tweets, function(singleTweet) {
+    tweetWords <- unlist(str_split(tolower(singleTweet), '\\s+'))
+    # compare our words to the dictionaries of positive & negative terms
+    # match() returns the position of the matched term or NA, apply is.na to convert to boolean
+    pos.matches <- !is.na(match(tweetWords, huliu.pwords))
+    neg.matches <- !is.na(match(tweetWords, huliu.nwords))
+    # and conveniently enough, TRUE/FALSE will be treated as 1/0 by sum():
+    score <- sum(pos.matches) - sum(neg.matches)
+    return(score)
+  })
+  return(data.frame(SentimentScore=scores, Tweet=tweets))
+}
+
+#
+#perform sentiment analysis
+#
+performSentimentAnalysis <- function(tweets){
+  #
+  # perform twitter sentiment analysis for each tweet
+  #
+  tweets <- cleanContent(tweets)
+  # call getSentiment score
+  ss <- getSentimentScore(tweets)
+ 
+  # Get rid of tweets that have zero score and seperate +ve from -ve tweets
+  ss$posTweets <- as.numeric(ss$SentimentScore >=1)
+  ss$negTweets <- as.numeric(ss$SentimentScore <=-1)
+ 
+  # Let's summarize now
+  summary <- list(TweetsFetched=length(ss$SentimentScore),
+                  PositiveTweets=sum(ss$posTweets), NegativeTweets=sum(ss$negTweets),
+                  AverageScore=round(mean(ss$SentimentScore),3))
+ 
+  # some tweets have no score - positive offsets negative - so the next line is necessary
+  summary$TweetsWithScore <- summary$PositiveTweets + summary$NegativeTweets
+ 
+  #Get Sentiment Score
+  summary$SentimentScore  <- round(summary$PositiveTweets/summary$TweetsWithScore, 2)
+  return(summary)
+}
+
+#
+#search twitter using hash tags
+#
+searchTwitterHashtag <- function(tw.hashtag, certificate.path, how.many=300, what.lang="en") {
+  tweets <- try(searchTwitter(tw.hashtag, lang=what.lang, n=how.many, cainfo=certificate.path), silent=T)
+  if("try-error" %in% class(tweets))
+    return(data.frame(error="Oops an error occurred"))
+  return(tweets)
+}
+
+#search twitter using handle
+searchTwitterHandle <- function(tw.handle, certificate.path, how.many=300) {
+  tweets <-  try(userTimeline(tw.handle, n=how.many, cainfo=certificate.path), silent=T)
+  if("try-error" %in% class(tweets))
+    return(list(error="Oops an error occurred"))
+  return(tweets)
+}
+
+#download ca cert file
+downloadCACertFile <- function(){
+  download.file(url="http://curl.haxx.se/ca/cacert.pem", destfile="cacert.pem")
+}
+
+# Certain words may not be relevant for your secenario to be counted as positive and negative on Hu and Liu list
+# Remove them before sending the words to this list
+# Fitler words
+filterWords <- function(words){
+  if(length(which(words %in% filter.words)) > 0)
+    words <- words[-which(words %in% filter.words)]
+  return(words)
+}
+
+# example
+#get tweets and perform sentiment analysis
+tweets <- searchTwitterHandle(twitter.handle, CERTIFICATE_PATH, 300)
+tweets <- searchTwitterHashtag("trumnp",)
+summary <- performSentimentAnalysis(tweets)
+?searchTwitterHashtag
+```
+
+```{r Ajax Twitter APi keys}
+setupCrawler <- function() {
+  # Load the packages
+  library(bitops)
+  library(RCurl)
+  library(RJSONIO)
+  library(ROAuth)
+  library(twitteR)
+  library(stringr)
+  
+  # Provide Tokens (apps.twitter.com)
+  api_key <- c("BaXijPbyZTBtmjKsXVDPwTPCc")
+  api_secret <- c("qwuO61IXqt7C3HuGs9USpVm5lsMF3HbHxhdViw8cUmCftzTI2i") 
+  token <- c("80344503-5mEqgYjpElSZ9euB0CsrrnIfgiy2AG9O5CtWEzlOE") 
+  token_secret <- c("s0kTmeiautNWCOfkDPmkJ4gTsUafzoz6iNtIEijWW4mN8")
+  
+  # Create Twitter Connection
+  # [1] "Using direct authentication"
+  # vUse a local file to cache OAuth access credentials between R sessions?
+  # 1: Yes
+  # 2: No
+  origop <- options("httr_oauth_cache")
+  options(httr_oauth_cache = TRUE)
+  setup_twitter_oauth(api_key, api_secret, token, token_secret)
+  options(httr_oauth_cache = origop)
+}  
+
+#download.file(url="http://curl.haxx.se/ca/cacert.pem", destfile="cacert.pem")
+#setup_twitter_oauth(api_key,api_secret,token,token_secret)
+
+#cred <- OAuthFactory$new(consumerKey=api_key,
+#                         consumerSecret=api_secret,
+#                         requestURL='https://api.twitter.com/oauth/request_token',
+#                         accessURL ='	https://api.twitter.com/oauth/access_token',
+#                         authURL= 'https://api.twitter.com/oauth/authorize'
+#                         )
+
+setupCrawler()
+```
+
+```{r sentiment function}
+#this function cleans the tweets and returns the merged data frame
+score.sentiment = function(sentences, huliu.positive, huliu.negative, .progress='none')
+{
+	require(plyr)
+	require(stringr)
+	list=lapply(sentences, function(sentence, huliu.positive, huliu.negative)
+	{
+		sentence = gsub('[[:punct:]]',' ',sentence)
+		sentence = gsub('[[:cntrl:]]','',sentence)
+		sentence = gsub('\\d+','',sentence)  #removes decimal number
+		sentence = gsub('\n','',sentence)    #removes new lines
+		sentence = tolower(sentence)
+		word.list = str_split(sentence, '\\s+')
+		words = unlist(word.list)  #changes a list to character vector
+		pos.matches = match(words, huliu.positive)
+		neg.matches = match(words, huliu.negative)
+		pos.matches = !is.na(pos.matches)
+		neg.matches = !is.na(neg.matches)
+		pp = sum(pos.matches)
+		nn = sum(neg.matches)
+		score = sum(pos.matches) - sum(neg.matches)
+		list1 = c(score, pp, nn)
+		return (list1)
+	}, huliu.positive, huliu.negative)
+	score_new = lapply(list, `[[`, 1)
+	pp1 = lapply(list, `[[`, 2)
+	nn1 = lapply(list, `[[`, 3)
+
+	scores.df = data.frame(score = score_new, text=sentences)
+	positive.df = data.frame(Positive = pp1, text=sentences)
+	negative.df = data.frame(Negative = nn1, text=sentences)
+
+	list_df = list(scores.df, positive.df, negative.df)
+	return(list_df)
+}
+
+```
+
+```{r loading twitter data}
+#cred$handshake(cainfo="cacert.pem")
+URL_prod_rev <- 
+  "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents-financials.csv"
+SP500 <- read.csv(URL_prod_rev, 
+                    header=T, 
+                    sep=",",
+                    stringsAsFactors=FALSE)
+
+#
+
+SP500_tickers <- paste("$",SP500$Symbol, sep = "")
+SP500_tickers <- paste(SP500_tickers,SP500$Name, sep = " ")
+tweets<- list()
+for (i in SP500_tickers[1:10]) {
+  tweets[i] <- list(searchTwitter(i,n=1500 ,lang = "en", since = '2017-03-14'))
+}
+str(tweets)
+?twListToDF
+#convert to data frame
+df<- twListToDF((tweets))
+#sample <- !duplicated(sample)
+retweet<- df[length(which(df$retweetCount>0 | df$favoriteCount >0)),]
+retweet$text <- sapply(retweet$text, function(row) iconv(row, "latin1","ASCII",sub = ""))
+retweet$text <- gsub("(f|ht)tp(s?)://(.*)[.][a-z]+","",retweet$text)
+retweet<- add_rownames(retweet, "VALUE")
+retweet$VALUE<-gsub('[[:digit:]]+', '', retweet$VALUE)
+
+raw.sample <- df$text
+
+source("setupCrawler.R") #include external script source
+setupCrawler()
+```
+
+
+```{r lets play!}
+result <- score.sentiment(sample, huliu.positive, huliu.negative)
+
+library(reshape)
+#create a copy of the result
+test1 = result[[1]] #score
+test2 = result[[2]] #postive scores
+test3 = result[[3]] #negative scores
+
+test1$text <- NULL
+test2$text <- NULL
+test3$text <- NULL
+
+q1 <- test1[1,]
+q2 <- test2[1,]
+q3 <- test3[1,]
+
+qq1 <- melt(q1, , var= 'Score')
+qq2 <- melt(q2, , var= 'Positive')
+qq3 <- melt(q3, , var= 'Negative')
+
+qq1['Score'] = NULL
+qq2['Positive'] = NULL
+qq3['Negative'] = NULL
+
+table1 <- data.frame(Text=result[[1]]$text, Score=qq1)
+table2 <- data.frame(Text=result[[2]]$text, Score=qq2)
+table3 <- data.frame(Text=result[[3]]$text, Score=qq3)
+
+#Merge the tables
+table_final <- data.frame(Text = table1$Text, Score= table1$value, Positive = table2$value, Negative = table3$value)
+head(table_final)
+
+```
+
+```{r Dolphyn}
+# Author: Jitender Aswani, Co-Founder @datadolph.in
+# Date: 2012-30-1
+# Description: Extracts tweets from twitter and run sentiment analysis on using list of sentiment words from Hu and Liu
+# Packages Used: RCurl, XML, TwitteR, RJSONIO
+# Blog Reference: http://www.r-bloggers.com/updated-sentiment-analysis-and-a-word-cloud-for-netflix-the-r-way/
+# Download
+# Copyright (c) 2011, under the Creative Commons Attribution-NonCommercial 3.0 Unported (CC BY-NC 3.0) License
+# For more information see: https://creativecommons.org/licenses/by-nc/3.0/
+# All rights reserved.
+# Revised Sentiment Analyis using Hu & Liu's library of 6,800 negative and positive words
+
+#Populate the list of sentiment words from Hu and Liu (http://www.cs.uic.edu/~liub/FBS/sentiment-analysis.html)
+setwd("C:/Users/Justin/Documents/AjaxIntel")
+huliu.pwords <- read.csv("positive-words.txt", sep="") #need this lexicon!!
+huliu.nwords <- scan(paste("C:/Users/Justin/Documents/AjaxIntel",'negative-words.txt', sep=""), what='character', comment.char=';')
+# Add some extra words
+negative.words <- c(negative.words,'wtf','wait','waiting','epicfail', 'crash', 'bug', 'bugy', 'bugs', 'slow', 'lie')
+#Remove some words for example sap and Cloud
+huliu.nwords <- huliu.nwords[!huliu.nwords=='sap']
+huliu.nwords <- huliu.nwords[!huliu.nwords=='cloud']
+
+#
+# clean up a large character string
+#
+cleanText <- function(x) {
+  # tolower
+  x = tolower(x)
+  # remove rt
+  #x = gsub("rt", "", x)
+  # remove at
+  x = gsub("@\\w+", "", x)
+  # remove punctuation
+  x = gsub("[[:punct:]]", "", x)
+  # remove control characters
+  x <-  gsub('[[:cntrl:]]', '', x)
+  # remove numbers
+  x = gsub("[[:digit:]]", "", x)
+  # remove links http
+  x = gsub("http\\w+",  "", x)
+  # remove tabs
+  x = gsub("[ |\t]{2,}", " ", x)
+  # remove new lines
+  x = gsub("[ |\n]{1,}", " ", x)
+  # remove blank spaces at the beginning
+  x = gsub("^ ", "", x)
+  # remove blank spaces at the end
+  x = gsub(" $", "", x)
+  return(x)
+}
+
+
+#
+# clean up tweets or any other doucment for corpus and sentiment  analysis
+#
+cleanContent <- function(content){
+  # clean out non-ASCII characters, remove numbers, puncuations, stop words
+  content <- sapply(content, function(x) iconv(x, "latin1", "ASCII", sub=""))
+  content <- cleanText(content) # clean up
+  # remove stop-words
+  content <- removeWords(content,
+                         c(stopwords("english"),  "twitter", "wikipedia"))
+  return(content)
+}
+#
+# build a generic tag cloud
+#
+buildTagCloud  <- function (content, word.threshold=2){
+  #cleanup
+  content <- cleanContent(content)
+  # make corpus for text mining
+  content.corpus <- Corpus(VectorSource(content))
+ 
+  #build a term document
+  #content.dtm <- TermDocumentMatrix(content.corpus, control = list(stopwords = TRUE, minWordLength = 5))
+  content.dtm <- TermDocumentMatrix(content.corpus, control = list(minWordLength = 5))
+  # get a matrix
+  content.m = as.matrix(content.dtm)
+  # get word counts in decreasing order
+  content.words <- sort(rowSums(content.m), decreasing=TRUE)
+  # create a data frame with words and their frequencies
+  content.df = data.frame(text=names(content.words), size=content.words)
+  #write.csv(content.words, "company-word-tag.csv", row.names=F)
+  return( content.df[content.df$size > word.threshold,])
+}
+
+#
+# get sentiment score for each tweet
+#
+getSentimentScore <- function(tweets) {
+  scores <- lapply(tweets, function(singleTweet) {
+    tweetWords <- unlist(str_split(tolower(singleTweet), '\\s+'))
+    # compare our words to the dictionaries of positive & negative terms
+    # match() returns the position of the matched term or NA, apply is.na to convert to boolean
+    pos.matches <- !is.na(match(tweetWords, huliu.pwords))
+    neg.matches <- !is.na(match(tweetWords, huliu.nwords))
+    # and conveniently enough, TRUE/FALSE will be treated as 1/0 by sum():
+    score <- sum(pos.matches) - sum(neg.matches)
+    return(score)
+  })
+  return(data.frame(SentimentScore=scores, Tweet=tweets))
+}
+
+#
+#perform sentiment analysis
+#
+performSentimentAnalysis <- function(tweets){
+  #
+  # perform twitter sentiment analysis for each tweet
+  #
+  tweets <- cleanContent(tweets)
+  # call getSentiment score
+  ss <- getSentimentScore(tweets)
+ 
+  # Get rid of tweets that have zero score and seperate +ve from -ve tweets
+  ss$posTweets <- as.numeric(ss$SentimentScore >=1)
+  ss$negTweets <- as.numeric(ss$SentimentScore <=-1)
+ 
+  # Let's summarize now
+  summary <- list(TweetsFetched=length(ss$SentimentScore),
+                  PositiveTweets=sum(ss$posTweets), NegativeTweets=sum(ss$negTweets),
+                  AverageScore=round(mean(ss$SentimentScore),3))
+ 
+  # some tweets have no score - positive offsets negative - so the next line is necessary
+  summary$TweetsWithScore <- summary$PositiveTweets + summary$NegativeTweets
+ 
+  #Get Sentiment Score
+  summary$SentimentScore  <- round(summary$PositiveTweets/summary$TweetsWithScore, 2)
+  return(summary)
+}
+
+#
+#search twitter using hash tags
+#
+searchTwitterHashtag <- function(tw.hashtag, certificate.path, how.many=300, what.lang="en") {
+  tweets <- try(searchTwitter(tw.hashtag, lang=what.lang, n=how.many, cainfo=certificate.path), silent=T)
+  if("try-error" %in% class(tweets))
+    return(data.frame(error="Oops an error occurred"))
+  return(tweets)
+}
+
+#search twitter using handle
+searchTwitterHandle <- function(tw.handle, certificate.path, how.many=300) {
+  tweets <-  try(userTimeline(tw.handle, n=how.many, cainfo=certificate.path), silent=T)
+  if("try-error" %in% class(tweets))
+    return(list(error="Oops an error occurred"))
+  return(tweets)
+}
+
+#download ca cert file
+downloadCACertFile <- function(){
+  download.file(url="http://curl.haxx.se/ca/cacert.pem", destfile="cacert.pem")
+}
+
+# Certain words may not be relevant for your secenario to be counted as positive and negative on Hu and Liu list
+# Remove them before sending the words to this list
+# Fitler words
+filterWords <- function(words){
+  if(length(which(words %in% filter.words)) > 0)
+    words <- words[-which(words %in% filter.words)]
+  return(words)
+}
+
+# example
+#get tweets and perform sentiment analysis
+tweets <- searchTwitterHandle(twitter.handle, CERTIFICATE_PATH, 300)
+tweets <- searchTwitterHashtag("trumnp",)
+summary <- performSentimentAnalysis(tweets)
+?searchTwitterHashtag
+```
+
+
+```{r more news api}
+install.packages("jsonlite")
+library(jsonlite)
+news <- as.data.frame(fromJSON("https://newsapi.org/v1/articles?source=the-wall-street-journal&sortBy=top&apiKey=53903acb258049688a6a6acecc569d42"))
+NEWSAPI.org <- "53903acb258049688a6a6acecc569d42"
+THEGUARDIAN <- "65ed54d8-3907-4875-ad23-28151efdf0aa"
+#https://newsapi.org/v1/articles?source=the-wall-street-journal&sortBy=top&apiKey=53903acb258049688a6a6acecc569d42
+
+news2<- as.data.frame(fromJSON("https://newsapi.org/v1/articles?source=the-next-web&sortBy=latest&apiKey=53903acb258049688a6a6acecc569d42"))
+
+bloomberg <- as.data.frame(fromJSON("https://newsapi.org/v1/articles?source=bloomberg&sortBy=top&apiKey=53903acb258049688a6a6acecc569d42"))
+```
+
+`BAG OF WORDS` build two bags of words: one with words that associates with stock rise, one with stock price drop. Then use Bayesian Probability to classify them.
+
+```{r}
+#USING THE tm PACKAGE
+library(tm)
+text = c("Doc1;","This is doc2 --", "And, then Doc3.")
+ctext = Corpus(VectorSource(text))
+ctext
+#writeCorpus(ctext)
+
+#THE CORPUS IS A LIST OBJECT in R of type VCorpus or Corpus
+inspect(ctext)
+
+print(as.character(ctext[[1]]))
+
+print(lapply(ctext[1:2],as.character))
+
+ctext = tm_map(ctext,tolower)  #Lower case all text in all docs
+inspect(ctext)
+
+ctext2 = tm_map(ctext,toupper)
+inspect(ctext2)
+
+#dropping words
+dropWords = c("IS","AND","THEN")
+ctext2 = tm_map(ctext2,removeWords,dropWords)
+inspect(ctext2)
+
+temp = tm_map(temp,removeWords,stopwords("english"))
+print(lapply(temp,as.character))
+temp = tm_map(temp,removePunctuation)
+print(lapply(temp,as.character))
+temp = tm_map(temp,removeNumbers)
+print(lapply(temp,as.character))
+
+#CONVERT CORPUS INTO ARRAY OF STRINGS AND FLATTEN
+ctext = Corpus(VectorSource(text))
+ctext
+
+print(lapply(ctext, as.character))
+
+ctext = tm_map(ctext,removePunctuation)
+print(lapply(ctext, as.character))
+
+txt = NULL
+for (j in 1:length(ctext)) {
+  txt = c(txt,ctext[[j]]$content)
+}
+txt = paste(txt,collapse=" ")
+txt = tolower(txt)
+print(txt)
+
+#TERM-DOCUMENT MATRIX
+tdm = TermDocumentMatrix(ctext,control=list(minWordLength=1))
+print(tdm)
+
+inspect(tdm[10:20,11:18])
+
+out = findFreqTerms(tdm,lowfreq=5)
+print(out)
+
+library(tm)
+textarray = c("Free software comes with ABSOLUTELY NO certain WARRANTY","You are welcome to redistribute free software under certain conditions","Natural language support for software in an English locale","A collaborative project with many contributors")
+textcorpus = Corpus(VectorSource(textarray))
+m = TermDocumentMatrix(textcorpus)
+print(as.matrix(m))
+print(as.matrix(weightTfIdf(m)))
+
+#STEMMING
+ctext2 = tm_map(ctext,removeWords,stopwords("english"))
+ctext2 = tm_map(ctext2, stemDocument)
+print(lapply(ctext2, as.character))
+```
+
