@@ -10,12 +10,8 @@ https://github.com/srdas/user2016/blob/master/TextMining_UseR2016.Rmd
 
 ```{r set up}
 if(!require("pacman")) install.packages("pacman")
-pacman::p_load(twitteR,sentimentr,plyr,ggplot2,tm,wordcloud,textir,qdap,maptpx,RCurl,ROAuth,stringr,Git)
-library(twitteR);library(sentimentr);library(plyr);library(ggplot2);library(RColorBrewer);library(tm);library(wordcloud);library(textir);library(qdap);library(maptpx);library(RCurl)
-library(ROAuth);library(stringr);library(dplyr)
-install.packages("RCurl", "RJSONIO", "bitops")
-install.packages('base64enc')
-install.packages('streamR')
+pacman::p_load(twitteR,sentimentr,plyr,ggplot2,tm,wordcloud,textir,qdap,maptpx,RCurl,ROAuth,stringr,RJSONIO,bitops,base64enc,streamR)
+library(twitteR);library(sentimentr);library(plyr);library(ggplot2);library(RColorBrewer);library(tm);library(wordcloud);library(textir);library(qdap);library(maptpx);library(RCurl);library(ROAuth);library(stringr);library(dplyr);library(RJSONIO);library(bitops);library(base64enc)
 ```
 
 ```{r Ajax Twitter APi keys}
@@ -55,6 +51,7 @@ setupCrawler <- function() {
 #                         authURL= 'https://api.twitter.com/oauth/authorize'
 #                         )
 
+source("setupCrawler.R") #include external script source
 setupCrawler()
 ```
 
@@ -106,34 +103,32 @@ SP500 <- read.csv(URL_prod_rev,
                     sep=",",
                     stringsAsFactors=FALSE)
 
-#
-
 SP500_tickers <- paste("$",SP500$Symbol, sep = "")
 SP500_tickers <- paste(SP500_tickers,SP500$Name, sep = " ")
+
+#loop that query all 500 stocks
 tweets<- list()
-for (i in SP500_tickers[1:10]) {
+for (i in SP500_tickers[1:3]) {
   tweets[i] <- list(searchTwitter(i,n=1500 ,lang = "en", since = '2017-03-14'))
 }
-str(tweets)
-?twListToDF
+
 #convert to data frame
-df<- twListToDF((tweets))
-#sample <- !duplicated(sample)
-retweet<- df[length(which(df$retweetCount>0 | df$favoriteCount >0)),]
-retweet$text <- sapply(retweet$text, function(row) iconv(row, "latin1","ASCII",sub = ""))
-retweet$text <- gsub("(f|ht)tp(s?)://(.*)[.][a-z]+","",retweet$text)
-retweet<- add_rownames(retweet, "VALUE")
-retweet$VALUE<-gsub('[[:digit:]]+', '', retweet$VALUE)
+tweets<- unlist(tweets)
+df<- do.call("rbind", lapply(tweets,as.data.frame))
+
+#retweet<- df[length(which(df$retweetCount>0 | df$favoriteCount >0)),]
+df$text <- sapply(df$text, function(row) iconv(row, "latin1","ASCII",sub = ""))
+df$text <- gsub("(f|ht)tp(s?)://(.*)[.][a-z]+","",df$text)
+df<- add_rownames(df, "VALUE")
+df$VALUE<-gsub('[[:digit:]]+', '', df$VALUE)
 
 raw.sample <- df$text
 
-source("setupCrawler.R") #include external script source
-setupCrawler()
 ```
 
 
 ```{r lets play!}
-result <- score.sentiment(sample, huliu.positive, huliu.negative)
+result <- score.sentiment(raw.sample, huliu.positive, huliu.negative)
 
 library(reshape)
 #create a copy of the result
