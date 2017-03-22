@@ -10,8 +10,8 @@ https://github.com/srdas/user2016/blob/master/TextMining_UseR2016.Rmd
 
 ```{r set up}
 if(!require("pacman")) install.packages("pacman")
-pacman::p_load(twitteR,sentimentr,plyr,ggplot2,tm,wordcloud,textir,qdap,maptpx,RCurl,ROAuth,stringr,RJSONIO,bitops,base64enc,streamR,reshape)
-library(twitteR);library(sentimentr);library(plyr);library(ggplot2);library(RColorBrewer);library(tm);library(wordcloud);library(textir);library(qdap);library(maptpx);library(RCurl);library(ROAuth);library(stringr);library(dplyr);library(RJSONIO);library(bitops);library(base64enc);library(reshape)
+pacman::p_load(twitteR,sentimentr,plyr,ggplot2,tm,wordcloud,textir,qdap,maptpx,RCurl,ROAuth,stringr,RJSONIO,bitops,base64enc,streamR,reshape,SnowballC)
+library(twitteR);library(sentimentr);library(plyr);library(ggplot2);library(RColorBrewer);library(tm);library(wordcloud);library(textir);library(qdap);library(maptpx);library(RCurl);library(ROAuth);library(stringr);library(dplyr);library(RJSONIO);library(bitops);library(base64enc);library(reshape);library(SnowballC)
 ```
 
 ```{r Ajax Twitter APi keys}
@@ -108,12 +108,12 @@ SP500 <- read.csv(URL_prod_rev,
                     stringsAsFactors=FALSE)
 
 SP500_tickers <- paste("$",SP500$Symbol, sep = "")
-SP500_tickers <- paste(SP500_tickers,SP500$Name, sep = " ")
+#SP500_tickers <- paste(SP500_tickers,SP500$Name, sep = " ")
 
 #loop that query all 500 stocks
 tweets<- list()
 for (i in SP500_tickers[1:3]) {
-  tweets[i] <- list(searchTwitter(i,n=1500 ,lang = "en", since = '2017-03-14'))
+  tweets[i] <- list(searchTwitter(i,n=1500 ,lang = "en", since = '2017-03-01 06:00:00')) #London Time
 }
 
 #convert to data frame
@@ -145,12 +145,16 @@ df$text = gsub("[ |\n]{1,}", " ", df$text)
 df$text = gsub("^ ", "", df$text)
   # remove blank spaces at the end
 df$text = gsub(" $", "", df$text)
-
-df<- add_rownames(df, "VALUE")
-df$VALUE<-gsub('[[:digit:]]+', '', df$VALUE)
-
+df<- add_rownames(df, "ticker")
+df$ticker<-gsub('[[:digit:]]+', '', df$ticker)
+df$ticker = gsub("[[:punct:]]", "", df$ticker)
+df$ticker = tolower(df$ticker)
+df$text = gsub(df$ticker, "", df$text)
+df$text = gsub(df$ticker, "", df$text)
+df$text = gsub(df$ticker, "", df$text)
 raw.sample <- df$text
-head(raw.sample)
+
+
 ```
 
 ```{r lets play!}
@@ -185,8 +189,8 @@ table3 <- data.frame(Text=result[[3]]$text, Score=qq3)
 #Merge the tables
 table_final <- data.frame(Text = table1$Text, Score= table1$value, Positive = table2$value, Negative = table3$value)
 #DISAG.Var = abs(1-abs((table_final$Positive-table_final$Negative)/(table_final$Positive+table_final$Negative)))
-head(table_final)
-rm(Sentiment_merge)
+tail(table_final)
+
 Sentiment_merge<- cbind(df,table_final)
 ```
 
@@ -210,57 +214,45 @@ bloomberg <- as.data.frame(fromJSON("https://newsapi.org/v1/articles?source=bloo
 library(tm)
 text<-as.character(Sentiment_merge$Text)
 head(text)
-text = c("Doc1;","This is doc2 --", "And, then Doc3.")
+#text = c("Doc1;","This is doc2 --", "And, then Doc3.")
 ctext = Corpus(VectorSource(text))
-ctext
-#writeCorpus(ctext)
-str(text)
 #THE CORPUS IS A LIST OBJECT in R of type VCorpus or Corpus
 inspect(ctext)
 
-print(as.character(ctext[[1]]))
-
-print(lapply(ctext[1:2],as.character))
-
-ctext = tm_map(ctext,tolower)  #Lower case all text in all docs
-inspect(ctext)
-
-ctext2 = tm_map(ctext,toupper)
-inspect(ctext2)
-
 #dropping words
 dropWords = c("IS","AND","THEN")
-ctext2 = tm_map(ctext2,removeWords,dropWords)
-inspect(ctext2)
-
-temp = tm_map(ctext2,removeWords,stopwords("english"))
-print(lapply(temp,as.character))
-temp = tm_map(temp,removeNumbers)
-print(lapply(temp,as.character))
+ctext2 = tm_map(ctext,removeWords,dropWords)
+ctext2 = tm_map(ctext,removeWords,stopwords("english"))
 
 #CONVERT CORPUS INTO ARRAY OF STRINGS AND FLATTEN
-ctext = Corpus(VectorSource(text))
-ctext
 
-print(lapply(ctext, as.character))
-
-txt = NULL
-for (j in 1:length(ctext)) {
-  txt = c(txt,ctext[[j]]$content)
-}
-txt = paste(txt,collapse=" ")
-txt = tolower(txt)
-print(txt)
+#txt = NULL
+#for (j in 1:length(ctext2)) {
+#  txt = c(txt,ctext2[[j]]$content)
+#}
+#txt = paste(txt,collapse=" ")
 
 #TERM-DOCUMENT MATRIX
-tdm = TermDocumentMatrix(ctext,control=list(minWordLength=1))
-print(tdm)
 
-inspect(tdm[10:20,11:18])
+dtm_reviews <- DocumentTermMatrix(
+  ctext2, 
+  control = list(wordLengths = c(2, Inf),
+                 weighting=function(x) weightTfIdf(x))
+)
 
-out = findFreqTerms(tdm,lowfreq=5)
+print(dtm_reviews)
+print(lapply(dtm_reviews, as.character))
+inspect(dtm_reviews)
+
+out = findFreqTerms(dtm_reviews,lowfreq=5)
 print(out)
 
+(dtm_reviews_dense <- removeSparseTerms(dtm_reviews, sparse= 0.6))
+inspect(dtm_reviews_dense)
+
+reviews_mat <- as.matrix(dtm_reviews_dense)
+dim(reviews_mat)
+reviews_mat <- t(t(reviews_mat)-colMeans(reviews_mat))
 library(tm)
 textarray = c("Free software comes with ABSOLUTELY NO certain WARRANTY","You are welcome to redistribute free software under certain conditions","Natural language support for software in an English locale","A collaborative project with many contributors")
 textcorpus = Corpus(VectorSource(textarray))
