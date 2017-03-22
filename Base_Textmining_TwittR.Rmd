@@ -10,12 +10,8 @@ https://github.com/srdas/user2016/blob/master/TextMining_UseR2016.Rmd
 
 ```{r set up}
 if(!require("pacman")) install.packages("pacman")
-pacman::p_load(twitteR,sentimentr,plyr,ggplot2,tm,wordcloud,textir,qdap,maptpx,RCurl,ROAuth,stringr,Git)
-library(twitteR);library(sentimentr);library(plyr);library(ggplot2);library(RColorBrewer);library(tm);library(wordcloud);library(textir);library(qdap);library(maptpx);library(RCurl)
-library(ROAuth);library(stringr);library(dplyr)
-install.packages("RCurl", "RJSONIO", "bitops")
-install.packages('base64enc')
-install.packages('streamR')
+pacman::p_load(twitteR,sentimentr,plyr,ggplot2,tm,wordcloud,textir,qdap,maptpx,RCurl,ROAuth,stringr,RJSONIO,bitops,base64enc,streamR,reshape,SnowballC)
+library(twitteR);library(sentimentr);library(plyr);library(ggplot2);library(RColorBrewer);library(tm);library(wordcloud);library(textir);library(qdap);library(maptpx);library(RCurl);library(ROAuth);library(stringr);library(dplyr);library(RJSONIO);library(bitops);library(base64enc);library(reshape);library(SnowballC)
 ```
 
 ```{r Ajax Twitter APi keys}
@@ -55,6 +51,7 @@ setupCrawler <- function() {
 #                         authURL= 'https://api.twitter.com/oauth/authorize'
 #                         )
 
+#source("setupCrawler.R") #include external script source
 setupCrawler()
 ```
 
@@ -98,6 +95,10 @@ score.sentiment = function(sentences, huliu.positive, huliu.negative, .progress=
 ```
 
 ```{r loading twitter data}
+setwd("C:/Users/User/Desktop/Ajax_Jian/StartCo_Seed_Hatchery-master")
+huliu.positive <- scan("C:/Users/User/Desktop/Ajax_Jian/StartCo_Seed_Hatchery-master/positive-words.txt", what='character', comment.char=';')
+huliu.negative <- scan("C:/Users/User/Desktop/Ajax_Jian/StartCo_Seed_Hatchery-master/negative-words.txt", what='character', comment.char=';')
+huliu.negative <- c(huliu.negative,'wtf','wait','waiting','epicfail', 'crash', 'bug', 'bugy', 'bugs', 'slow', 'lie')
 #cred$handshake(cainfo="cacert.pem")
 URL_prod_rev <- 
   "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents-financials.csv"
@@ -106,34 +107,58 @@ SP500 <- read.csv(URL_prod_rev,
                     sep=",",
                     stringsAsFactors=FALSE)
 
-#
-
 SP500_tickers <- paste("$",SP500$Symbol, sep = "")
-SP500_tickers <- paste(SP500_tickers,SP500$Name, sep = " ")
-tweets<- list()
-for (i in SP500_tickers[1:10]) {
-  tweets[i] <- list(searchTwitter(i,n=1500 ,lang = "en", since = '2017-03-14'))
-}
-str(tweets)
-?twListToDF
-#convert to data frame
-df<- twListToDF((tweets))
-#sample <- !duplicated(sample)
-retweet<- df[length(which(df$retweetCount>0 | df$favoriteCount >0)),]
-retweet$text <- sapply(retweet$text, function(row) iconv(row, "latin1","ASCII",sub = ""))
-retweet$text <- gsub("(f|ht)tp(s?)://(.*)[.][a-z]+","",retweet$text)
-retweet<- add_rownames(retweet, "VALUE")
-retweet$VALUE<-gsub('[[:digit:]]+', '', retweet$VALUE)
+#SP500_tickers <- paste(SP500_tickers,SP500$Name, sep = " ")
 
+#loop that query all 500 stocks
+tweets<- list()
+for (i in SP500_tickers[1:3]) {
+  tweets[i] <- list(searchTwitter(i,n=1500 ,lang = "en", since = '2017-03-01 06:00:00')) #London Time
+}
+
+#convert to data frame
+tweets<- unlist(tweets)
+df<- do.call("rbind", lapply(tweets,as.data.frame))
+library(dplyr)
+#retweet<- df[length(which(df$retweetCount>0 | df$favoriteCount >0)),]
+
+df$text <- sapply(df$text, function(row) iconv(row, "latin1","ASCII",sub = ""))
+df$text <- gsub("(f|ht)tp(s?)://(.*)[.][a-z]+","",df$text)
+df$text = tolower(df$text)
+  # remove rt
+df$text = gsub("rt", "", df$text)
+  # remove at
+df$text = gsub("@\\w+", "", df$text)
+  # remove punctuation
+df$text = gsub("[[:punct:]]", "", df$text)
+  # remove control characters
+df$text <-  gsub('[[:cntrl:]]', '', df$text)
+  # remove numbers
+df$text = gsub("[[:digit:]]", "", df$text)
+  # remove links http
+df$text = gsub("http\\w+",  "", df$text)
+  # remove tabs
+df$text = gsub("[ |\t]{2,}", " ", df$text)
+  # remove new lines
+df$text = gsub("[ |\n]{1,}", " ", df$text)
+  # remove blank spaces at the beginning
+df$text = gsub("^ ", "", df$text)
+  # remove blank spaces at the end
+df$text = gsub(" $", "", df$text)
+df<- add_rownames(df, "ticker")
+df$ticker<-gsub('[[:digit:]]+', '', df$ticker)
+df$ticker = gsub("[[:punct:]]", "", df$ticker)
+df$ticker = tolower(df$ticker)
+df$text = gsub(df$ticker, "", df$text)
+df$text = gsub(df$ticker, "", df$text)
+df$text = gsub(df$ticker, "", df$text)
 raw.sample <- df$text
 
-source("setupCrawler.R") #include external script source
-setupCrawler()
+
 ```
 
-
 ```{r lets play!}
-result <- score.sentiment(sample, huliu.positive, huliu.negative)
+result <- score.sentiment(raw.sample, huliu.positive, huliu.negative)
 
 library(reshape)
 #create a copy of the result
@@ -163,9 +188,12 @@ table3 <- data.frame(Text=result[[3]]$text, Score=qq3)
 
 #Merge the tables
 table_final <- data.frame(Text = table1$Text, Score= table1$value, Positive = table2$value, Negative = table3$value)
-head(table_final)
+#DISAG.Var = abs(1-abs((table_final$Positive-table_final$Negative)/(table_final$Positive+table_final$Negative)))
+tail(table_final)
 
+Sentiment_merge<- cbind(df,table_final)
 ```
+
 ```{r more news api}
 install.packages("jsonlite")
 library(jsonlite)
@@ -184,62 +212,47 @@ bloomberg <- as.data.frame(fromJSON("https://newsapi.org/v1/articles?source=bloo
 ```{r}
 #USING THE tm PACKAGE
 library(tm)
-text = c("Doc1;","This is doc2 --", "And, then Doc3.")
+text<-as.character(Sentiment_merge$Text)
+head(text)
+#text = c("Doc1;","This is doc2 --", "And, then Doc3.")
 ctext = Corpus(VectorSource(text))
-ctext
-#writeCorpus(ctext)
-
 #THE CORPUS IS A LIST OBJECT in R of type VCorpus or Corpus
 inspect(ctext)
 
-print(as.character(ctext[[1]]))
-
-print(lapply(ctext[1:2],as.character))
-
-ctext = tm_map(ctext,tolower)  #Lower case all text in all docs
-inspect(ctext)
-
-ctext2 = tm_map(ctext,toupper)
-inspect(ctext2)
-
 #dropping words
 dropWords = c("IS","AND","THEN")
-ctext2 = tm_map(ctext2,removeWords,dropWords)
-inspect(ctext2)
-
-temp = tm_map(temp,removeWords,stopwords("english"))
-print(lapply(temp,as.character))
-temp = tm_map(temp,removePunctuation)
-print(lapply(temp,as.character))
-temp = tm_map(temp,removeNumbers)
-print(lapply(temp,as.character))
+ctext2 = tm_map(ctext,removeWords,dropWords)
+ctext2 = tm_map(ctext,removeWords,stopwords("english"))
 
 #CONVERT CORPUS INTO ARRAY OF STRINGS AND FLATTEN
-ctext = Corpus(VectorSource(text))
-ctext
 
-print(lapply(ctext, as.character))
-
-ctext = tm_map(ctext,removePunctuation)
-print(lapply(ctext, as.character))
-
-txt = NULL
-for (j in 1:length(ctext)) {
-  txt = c(txt,ctext[[j]]$content)
-}
-txt = paste(txt,collapse=" ")
-txt = tolower(txt)
-print(txt)
+#txt = NULL
+#for (j in 1:length(ctext2)) {
+#  txt = c(txt,ctext2[[j]]$content)
+#}
+#txt = paste(txt,collapse=" ")
 
 #TERM-DOCUMENT MATRIX
-tdm = TermDocumentMatrix(ctext,control=list(minWordLength=1))
-print(tdm)
 
-inspect(tdm[10:20,11:18])
+dtm_reviews <- DocumentTermMatrix(
+  ctext2, 
+  control = list(wordLengths = c(2, Inf),
+                 weighting=function(x) weightTfIdf(x))
+)
 
-out = findFreqTerms(tdm,lowfreq=5)
+print(dtm_reviews)
+print(lapply(dtm_reviews, as.character))
+inspect(dtm_reviews)
+
+out = findFreqTerms(dtm_reviews,lowfreq=5)
 print(out)
 
+(dtm_reviews_dense <- removeSparseTerms(dtm_reviews, sparse= 0.6))
+inspect(dtm_reviews_dense)
+
+reviews_mat <- as.matrix(dtm_reviews_dense)
+dim(reviews_mat)
+reviews_mat <- t(t(reviews_mat)-colMeans(reviews_mat))
 library(tm)
 textarray = c("Free software comes with ABSOLUTELY NO certain WARRANTY","You are welcome to redistribute free software under certain conditions","Natural language support for software in an English locale","A collaborative project with many contributors")
 textcorpus = Corpus(VectorSource(textarray))
@@ -253,3 +266,230 @@ ctext2 = tm_map(ctext2, stemDocument)
 print(lapply(ctext2, as.character))
 ```
 
+Note how closely this is related to the disagreement index seen earlier. 
+
+- The bullishness index does not predict returns, but returns do explain message posting. More messages are posted in periods of negative returns, but this is not a significant relationship. 
+
+- A contemporaneous relation between returns and bullishness is present. Overall, $AF04$ present some important results that are indicative of the results in this literature, confirmed also in subsequent work. 
+
+- First, that message board postings do not predict returns. 
+
+- Second, that disagreement (measured from postings) induces trading.
+
+- Third, message posting does predict volatility at daily frequencies and intraday. 
+
+- Fourth, messages reflect public information rapidly. Overall, they conclude that stock chat is meaningful in content and not just noise. 
+
+
+
+
+## Possibile Applications for Finance Firms
+
+An illustrative list of **applications** for finance firms is as follows:
+
+- Monitoring corporate buzz.
+- Analyzing textual data to detect, analyze, and understand the more profitable customers or products.
+- Targeting new clients.
+- Customer retention, which is a huge issue. Text mining complaints to prioritize customer remedial action makes a huge difference, especially in the insurance business. 
+- Lending activity - automated management of profiling information for lending screening. 
+- Market prediction and trading.
+- Risk management.
+- Automated financial analysts.
+- Financial forensics to prevent rogue employees from inflicting large losses.
+- Fraud detection.
+- Detecting market manipulation.
+- Social network analysis of clients.
+- Measuring institutional risk from systemic risk.
+
+## What is LSA?
+
+Latent Semantic Analysis (LSA) is an approach for reducing the dimension of the Term-Document Matrix (TDM), or the corresponding Document-Term Matrix (DTM), in general used interchangeably, unless a specific one is invoked. Dimension reduction of the TDM offers two benefits:
+
+- The DTM is usually a sparse matrix, and sparseness means that our algorithms have to work harder on missing data, which is clearly wasteful. Some of this sparseness is attenuated by applying LSA to the TDM. 
+
+- The problem of synonymy also exists in the TDM, which usually contains thousands of terms (words). Synonymy arises becauses many words have similar meanings, i.e., redundancy exists in the list of terms. LSA mitigates this redundancy, as we shall see through the ensuing anaysis of LSA. 
+
+- While not precisely the same thing, think of LSA in the text domain as analogous to PCA in the data domain. 
+
+## How is LSA implemented using SVD?
+
+LSA is the application of Singular Value Decomposition (SVD) to the TDM, extracted from a text corpus. Define the TDM to be a matrix $M \in {\cal R}^{m \times n}$, where $m$ is the number of terms and $n$ is the number of documents. 
+
+```{r machine learning}
+install.packages("RTextTools")
+library(tm)
+library(RTextTools)
+
+#Create sample text with positive and negative markers
+n = 1000
+npos = round(runif(n,1,25))
+nneg = round(runif(n,1,25))
+flag = matrix(0,n,1)
+flag[which(npos>nneg)] = 1
+text = NULL
+for (j in 1:n) {
+  res = paste(c(sample(huliu.positive,npos[j]),sample(huliu.negative,nneg[j])),collapse=" ")
+  text = c(text,res)
+}
+
+#Text Classification
+m = create_matrix(text)
+print(m)
+m = create_matrix(text,weighting=weightTfIdf)
+print(m)
+container <- create_container(m,flag,trainSize=1:(n/2), testSize=(n/2+1):n,virgin=FALSE)
+models <- train_models(container, algorithms=c("MAXENT","SVM","GLMNET","SLDA","TREE","BAGGING","BOOSTING","RF"))
+models <- train_models(container, algorithms=c("MAXENT","SVM","GLMNET","TREE"))
+results <- classify_models(container, models)
+analytics <- create_analytics(container, results)
+
+#RESULTS
+analytics@algorithm_summary # SUMMARY OF PRECISION, RECALL, F-SCORES, AND ACCURACY SORTED BY TOPIC CODE FOR EACH ALGORITHM
+analytics@label_summary # SUMMARY OF LABEL (e.g. TOPIC) ACCURACY
+analytics@document_summary # RAW SUMMARY OF ALL DATA AND SCORING
+analytics@ensemble_summary # SUMMARY OF ENSEMBLE PRECISION/COVERAGE. USES THE n VARIABLE PASSED INTO create_analytics()
+
+#CONFUSION MATRIX
+yhat = as.matrix(analytics@document_summary$CONSENSUS_CODE)
+y = flag[(n/2+1):n]
+print(table(y,yhat))
+
+```
+
+Create a temporary directory and add some documents to it. This is a modification of the example in the **lsa** package
+
+```{r}
+system("mkdir D")
+write( c("blue", "red", "green"), file=paste("D", "D1.txt", sep="/"))
+write( c("black", "blue", "red"), file=paste("D", "D2.txt", sep="/"))
+write( c("yellow", "black", "green"), file=paste("D", "D3.txt", sep="/"))
+write( c("yellow", "red", "black"), file=paste("D", "D4.txt", sep="/"))
+```
+
+Create a TDM using the **textmatrix** function.
+
+```{r}
+library(lsa)
+tdm = textmatrix("D",minWordLength=1)
+print(tdm)
+```
+
+Remove the extra directory. 
+```{r}
+system("rm -rf D")
+```
+
+
+## So, what does SVD do? 
+
+SVD tries to connect the correlation matrix of terms ($M \cdot M^\top$) with the correlation matrix of documents ($M^\top \cdot M$) through the singular matrix. 
+
+To see this connection, note that matrix $T$ contains the eigenvectors of the correlation matrix of terms. Likewise, the matrix $D$ contains the eigenvectors of the correlation matrix of documents. To see this, let's compute
+
+```{r}
+et = eigen(tdm %*% t(tdm))$vectors
+print(et)
+ed = eigen(t(tdm) %*% tdm)$vectors
+print(ed)
+```
+
+## Dimension reduction of the TDM via LSA
+
+If we wish to reduce the dimension of the latent semantic space to $k < n$ then we use only the first $k$ eigenvectors. The **lsa** function does this automatically. 
+
+We call LSA and ask it to automatically reduce the dimension of the TDM using a built-in function **dimcalc_share**.
+
+```{r}
+res = lsa(tdm,dims=dimcalc_share())
+print(res)
+```
+
+We can see that the dimension has been reduced from $n=4$ to $n=2$. The output is shown for both the term matrix and the document matrix, both of which have only two columns. Think of these as the two "principal semantic components" of the TDM. 
+
+Compare the output of the LSA to the eigenvectors above to see that it is exactly that. The singular values in the ouput are connected to SVD as follows. 
+
+## LSA and SVD: the connection?
+
+First of all we see that the **lsa** function is nothing but the **svd** function in base R. 
+
+```{r}
+res2 = svd(tdm)
+print(res2)
+```
+
+The output here is the same as that of LSA except it is provided for $n=4$. So we have four columns in $T$ and $D$ rather than two. Compare the results here to the previous two slides to see the connection. 
+
+## What is the rank of the TDM? 
+
+We may reconstruct the TDM using the result of the LSA. 
+
+```{r}
+tdm_lsa = res$tk %*% diag(res$sk) %*% t(res$dk)
+print(tdm_lsa)
+```
+
+We see the new TDM after the LSA operation, it has non-integer frequency counts, but it may be treated in the same way as the original TDM. The document vectors populate a slightly different hyperspace. 
+
+LSA reduces the rank of the correlation matrix of terms $M \cdot M^\top$ to $n=2$. Here we see the rank before and after LSA. 
+
+```{r}
+library(Matrix)
+print(rankMatrix(tdm))
+print(rankMatrix(tdm_lsa))
+```
+
+## And LDA, what does it have to do with LSA?
+
+It is similar to LSA, in that it seeks to find the most related words and cluster them into topics. It uses a Bayesian approach to do this, but more on that later. Here, let's just do an example to see how we might use the **topicmodels** package. 
+
+```{r}
+#Load the package
+library(topicmodels)
+
+#Load data on news articles from Associated Press
+data(AssociatedPress)
+print(dim(AssociatedPress))
+```
+
+This is a large DTM (not TDM). It has more than 10,000 terms, and more than 2,000 documents. This is very large and LDA will take some time, so let's run it on a subset of the documents. 
+
+```{r}
+dtm = AssociatedPress[1:100,]
+dim(dtm)
+```
+
+
+## Now we run LDA on this data set
+
+```{r}
+#Set parameters for Gibbs sampling
+burnin = 4000
+iter = 2000
+thin = 500
+seed = list(2003,5,63,100001,765)
+nstart = 5
+best = TRUE
+
+#Number of topics
+k = 5
+```
+
+```{r}
+#Run LDA
+res <-LDA(dtm, k, method="Gibbs", control = list(nstart = nstart, seed = seed, best = best, burnin = burnin, iter = iter, thin = thin))
+
+#Show topics
+res.topics = as.matrix(topics(res))
+print(res.topics)
+
+#Show top terms
+res.terms = as.matrix(terms(res,10))
+print(res.terms)
+
+#Show topic probabilities
+res.topicProbs = as.data.frame(res@gamma)
+print(res.topicProbs)
+
+#Check that each term is allocated to all topics
+print(rowSums(res.topicProbs))
+```
